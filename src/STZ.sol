@@ -3,5 +3,4 @@ pragma solidity ^0.8.22;
 
 contract STZ {
     constructor() {}
-    function x() public {}
 }
