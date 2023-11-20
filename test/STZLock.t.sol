@@ -438,4 +438,77 @@ contract STZLockTest is Test {
         assertEq(stzBalanceEnd, stzPerSecond);
         assertEq(wethBalanceEnd, wethPerSecond);
     }
+
+    function testBobClaimRewardsAfterRedeem()
+        external
+        addedRewards(1_000 ether, 100 ether)
+        lockedSTZ(10 ether)
+        linearUnlockPeriodPassed
+        unlock
+    {
+        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        vm.warp(block.timestamp + timestamp + 1 hours);
+
+        uint256 bobStzRewardsStart = stzLock.calculateSTZRewards(bob);
+        uint256 bobWethRewardsStart = stzLock.calculateWETHRewards(bob);
+
+        vm.startPrank(bob);
+        IERC20(address(str)).approve(address(stzLock), 10 ether);
+        stzLock.redeem(10 ether);
+        vm.stopPrank();
+
+        uint256 bobStzRewardsEnd = stzLock.calculateSTZRewards(bob);
+        uint256 bobWethRewardsEnd = stzLock.calculateWETHRewards(bob);
+
+        assertEq(bobStzRewardsStart, bobStzRewardsEnd);
+        assertEq(bobWethRewardsStart, bobWethRewardsEnd);
+
+        vm.startPrank(bob);
+        stzLock.claimSTZRewards(bob);
+        stzLock.claimWETHRewards(bob);
+        vm.stopPrank();
+
+        assertEq(stzLock.calculateSTZRewards(bob), 0);
+        assertEq(stzLock.calculateWETHRewards(bob), 0);
+    }
+
+    function testBobClaimRewardsAfterLockPeriod() external addedRewards(1_000 ether, 100 ether) {
+        // WARP 2 DAYS BEFORE ENDING LOCK PERIOD
+        vm.warp(block.timestamp + stzLock.END_STAKING_UNIX_TIME() - 2 days);
+
+        // LOCK
+        uint256 amount = 10 ether;
+        vm.startPrank(owner);
+        IERC20(address(stz)).approve(owner, amount);
+        IERC20(address(stz)).transferFrom(owner, bob, amount);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        IERC20(address(stz)).approve(address(stzLock), amount);
+        stzLock.lock(amount);
+        vm.warp(block.timestamp + 7 days); // WARP LINEAR LOCK PERIOD
+        stzLock.unlock(10 ether); // REQUEST UNLOCK
+        vm.stopPrank();
+
+        uint256 bobStzRewardsStart = stzLock.calculateSTZRewards(bob);
+        uint256 bobWethRewardsStart = stzLock.calculateWETHRewards(bob);
+
+        // WARP SOME DAYS AFTER ENDING LOCK PERIOD
+        vm.warp(block.timestamp + 10 days);
+        assertTrue(block.timestamp > stzLock.END_STAKING_UNIX_TIME());
+
+        uint256 bobStzRewardsEnd = stzLock.calculateSTZRewards(bob);
+        uint256 bobWethRewardsEnd = stzLock.calculateWETHRewards(bob);
+
+        assertTrue(bobStzRewardsEnd >= bobStzRewardsStart);
+        assertTrue(bobWethRewardsEnd >= bobWethRewardsStart);
+
+        vm.startPrank(bob);
+        stzLock.claimSTZRewards(bob);
+        stzLock.claimWETHRewards(bob);
+        vm.stopPrank();
+
+        assertEq(stzLock.calculateSTZRewards(bob), 0);
+        assertEq(stzLock.calculateWETHRewards(bob), 0);
+    }
 }
