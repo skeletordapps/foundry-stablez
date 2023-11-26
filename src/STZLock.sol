@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.23;
 
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
@@ -41,8 +41,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     event Unlocked(address account, uint256 unlockedAt, uint256 amount);
     event Redeemed(address account, uint256 redeemedAt, uint256 amount);
     event Claimed(address account, uint256 claimedAt, uint256 amount, address token);
-    event STZAddedAsRewards(uint256 amount);
-    event WETHAddedAsRewards(uint256 amount);
+    event AddedRewards(uint256 amount, ISTZLock.RewardType rewardType);
     event EmergencyWithdrawal(uint256 amountInSTZ, uint256 amountInWETH);
 
     constructor(address _STZ, address _STR, address _WETH) Ownable(msg.sender) {
@@ -150,116 +149,94 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         _unpause();
     }
 
-    function addSTZAsRewards(uint256 amount) external whenNotPaused nonReentrant {
+    function addRewards(uint256 amount, ISTZLock.RewardType rewardType) external whenNotPaused nonReentrant {
         if (amount > 0) {
-            totalRewardsInSTZ += amount;
-            emit STZAddedAsRewards(amount);
-
-            STZ.safeTransferFrom(msg.sender, address(this), amount);
+            if (rewardType == ISTZLock.RewardType.STZ) {
+                STZ.safeTransferFrom(msg.sender, address(this), amount);
+                totalRewardsInSTZ += amount;
+            } else {
+                WETH.safeTransferFrom(msg.sender, address(this), amount);
+                totalRewardsInWETH += amount;
+            }
+            emit AddedRewards(amount, rewardType);
         }
     }
 
-    function addWETHAsRewards(uint256 amount) external whenNotPaused nonReentrant {
-        if (amount > 0) {
-            totalRewardsInWETH += amount;
-            emit WETHAddedAsRewards(amount);
+    function claimRewards(ISTZLock.RewardType rewardType) public whenNotPaused nonReentrant {
+        uint256 _totalRewards = rewardType == ISTZLock.RewardType.STZ ? totalRewardsInSTZ : totalRewardsInWETH;
 
-            WETH.safeTransferFrom(msg.sender, address(this), amount);
-        }
-    }
-
-    function claimSTZRewards(address account) public whenNotPaused nonReentrant {
-        uint256 _totalRewards = totalRewardsInSTZ;
         if (_totalRewards > 0) {
-            uint256 stzRewards = calculateSTZRewards(account);
-            if (stzRewards == 0 || _totalRewards < stzRewards) revert ISTZLock.STZLock__Rewards_Unnavailable();
+            uint256 rewards = calculateRewards(msg.sender, rewardType);
+            if (rewards == 0 || _totalRewards < rewards) revert ISTZLock.STZLock__Rewards_Unnavailable();
 
-            ISTZLock.Rewards storage userRewards = usersRewards[account];
-            userRewards.STZ_earned = 0;
-            userRewards.STZ_claimed += stzRewards;
-            userRewards.STZ_lastUpdate = block.timestamp;
+            ISTZLock.Rewards memory userRewards = usersRewards[msg.sender];
 
-            totalRewardsInSTZ -= stzRewards;
-            emit Claimed(account, block.timestamp, stzRewards, address(STZ));
+            console2.log("rewards", rewards);
 
-            STZ.safeTransfer(account, stzRewards);
+            if (rewardType == ISTZLock.RewardType.STZ) {
+                userRewards.stzEarned = 0;
+                userRewards.stzClaimed += rewards;
+                userRewards.stzLastUpdate = block.timestamp;
+                usersRewards[msg.sender] = userRewards;
+
+                totalRewardsInSTZ -= rewards;
+                emit Claimed(msg.sender, block.timestamp, rewards, address(STZ));
+
+                STZ.safeTransfer(msg.sender, rewards);
+            } else {
+                userRewards.wethEarned = 0;
+                userRewards.wethClaimed += rewards;
+                userRewards.wethLastUpdate = block.timestamp;
+                usersRewards[msg.sender] = userRewards;
+
+                totalRewardsInWETH -= rewards;
+                emit Claimed(msg.sender, block.timestamp, rewards, address(WETH));
+
+                WETH.safeTransfer(msg.sender, rewards);
+            }
         }
     }
 
-    function claimWETHRewards(address account) public whenNotPaused nonReentrant {
-        uint256 _totalRewards = totalRewardsInWETH;
-        if (_totalRewards > 0) {
-            uint256 wethRewards = calculateWETHRewards(account);
-            if (wethRewards == 0 || _totalRewards < wethRewards) revert ISTZLock.STZLock__Rewards_Unnavailable();
-
-            ISTZLock.Rewards storage userRewards = usersRewards[account];
-            userRewards.WETH_earned = 0;
-            userRewards.WETH_claimed += wethRewards;
-            userRewards.WETH_lastUpdate = block.timestamp;
-
-            totalRewardsInWETH -= wethRewards;
-            emit Claimed(account, block.timestamp, wethRewards, address(WETH));
-
-            WETH.safeTransfer(account, wethRewards);
-        }
-    }
-
-    function calculateSTZRewards(address account) public view returns (uint256) {
+    function calculateRewards(address account, ISTZLock.RewardType rewardType) public view returns (uint256) {
         ISTZLock.Rewards memory userRewards = usersRewards[account];
-        uint256 elapsedTime;
 
-        if (block.timestamp > END_STAKING_UNIX_TIME && END_STAKING_UNIX_TIME > userRewards.STZ_lastUpdate) {
-            elapsedTime = END_STAKING_UNIX_TIME - userRewards.STZ_lastUpdate;
-        } else if (block.timestamp > userRewards.STZ_lastUpdate) {
-            elapsedTime = block.timestamp - userRewards.STZ_lastUpdate;
+        uint256 elapsedTime;
+        uint256 rewardsPerSecond;
+        uint256 rewardsLastUpdate;
+        uint256 accumulatedRewards;
+
+        if (rewardType == ISTZLock.RewardType.STZ) {
+            rewardsPerSecond = STZ_REWARDS_PER_SECOND;
+            rewardsLastUpdate = userRewards.stzLastUpdate;
+            accumulatedRewards = userRewards.stzEarned;
+        } else {
+            rewardsPerSecond = WETH_REWARDS_PER_SECOND;
+            rewardsLastUpdate = userRewards.wethLastUpdate;
+            accumulatedRewards = userRewards.wethEarned;
+        }
+
+        if (block.timestamp > rewardsLastUpdate) {
+            elapsedTime = (block.timestamp > END_STAKING_UNIX_TIME)
+                ? END_STAKING_UNIX_TIME - rewardsLastUpdate
+                : block.timestamp - rewardsLastUpdate;
         }
 
         uint256 lockedAmount = balances[account];
-        uint256 accumulatedRewards = userRewards.STZ_earned;
 
-        if (totalRewardsInSTZ == 0 || lockedAmount == 0 || elapsedTime == 0) {
-            return accumulatedRewards;
-        }
+        if (totalLocked == 0 || lockedAmount == 0 || elapsedTime == 0) return accumulatedRewards;
 
-        uint256 PRECISION = 1e24; // Define the precision scaling factor
-        uint256 rewardsPerToken = elapsedTime * STZ_REWARDS_PER_SECOND * PRECISION / totalLocked;
-        uint256 newRewards = lockedAmount * rewardsPerToken / PRECISION;
-        uint256 rewards = accumulatedRewards + newRewards;
+        uint256 rewardsPerToken = (elapsedTime * rewardsPerSecond * 1e24) / totalLocked;
+        uint256 newRewards = (lockedAmount * rewardsPerToken) / 1e24;
 
-        return rewards;
-    }
-
-    function calculateWETHRewards(address account) public view returns (uint256) {
-        ISTZLock.Rewards memory userRewards = usersRewards[account];
-        uint256 elapsedTime;
-
-        if (block.timestamp > END_STAKING_UNIX_TIME && END_STAKING_UNIX_TIME > userRewards.WETH_lastUpdate) {
-            elapsedTime = END_STAKING_UNIX_TIME - userRewards.WETH_lastUpdate;
-        } else if (block.timestamp > userRewards.WETH_lastUpdate) {
-            elapsedTime = block.timestamp - userRewards.WETH_lastUpdate;
-        }
-
-        uint256 lockedAmount = balances[account];
-        uint256 accumulatedRewards = userRewards.WETH_earned;
-
-        if (totalRewardsInWETH == 0 || lockedAmount == 0 || elapsedTime == 0) {
-            return accumulatedRewards;
-        }
-
-        uint256 PRECISION = 1e24; // Define the precision scaling factor
-        uint256 rewardsPerToken = ((elapsedTime * WETH_REWARDS_PER_SECOND * PRECISION) / totalLocked);
-        uint256 newRewards = lockedAmount * rewardsPerToken / PRECISION;
-        uint256 rewards = accumulatedRewards + newRewards;
-
-        return rewards;
+        return accumulatedRewards + newRewards;
     }
 
     function updateRewards(address account) internal {
         ISTZLock.Rewards storage userRewards = usersRewards[account];
-        userRewards.STZ_earned = calculateSTZRewards(account);
-        userRewards.STZ_lastUpdate = block.timestamp;
+        userRewards.stzEarned = calculateRewards(account, ISTZLock.RewardType.STZ);
+        userRewards.stzLastUpdate = block.timestamp;
 
-        userRewards.WETH_earned = calculateWETHRewards(account);
-        userRewards.WETH_lastUpdate = block.timestamp;
+        userRewards.wethEarned = calculateRewards(account, ISTZLock.RewardType.WETH);
+        userRewards.wethLastUpdate = block.timestamp;
     }
 }

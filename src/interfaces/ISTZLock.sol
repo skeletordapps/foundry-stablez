@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.23;
 
 interface ISTZLock {
+    enum RewardType {
+        STZ,
+        WETH
+    }
+
     struct UserPoints {
         uint256 lastUpdate;
         uint256 accumulated;
@@ -13,12 +18,12 @@ interface ISTZLock {
     }
 
     struct Rewards {
-        uint256 STZ_lastUpdate;
-        uint256 STZ_claimed; // only for frontend purpouses
-        uint256 STZ_earned;
-        uint256 WETH_lastUpdate;
-        uint256 WETH_claimed; // only for frontend purpouses
-        uint256 WETH_earned;
+        uint256 stzLastUpdate;
+        uint256 stzClaimed; // only for frontend purpouses
+        uint256 stzEarned;
+        uint256 wethLastUpdate;
+        uint256 wethClaimed; // only for frontend purpouses
+        uint256 wethEarned;
     }
 
     error STZLock__UnsufficientBalance();

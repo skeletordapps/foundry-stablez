@@ -1,5 +1,5 @@
 // // SPDX-License-Identifier: UNLINCENSED
-// pragma solidity ^0.8.22;
+// pragma solidity ^0.8.23;
 
 // import {Test} from "forge-std/Test.sol";
 // import {DeploySTZToken} from "../script/DeploySTZToken.s.sol";

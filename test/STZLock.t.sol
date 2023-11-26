@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLINCENSED
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.23;
 
 import {Test} from "forge-std/Test.sol";
 import {DeploySTZLock} from "../script/DeploySTZLock.sol";
@@ -12,8 +12,11 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {console2} from "forge-std/console2.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract STZLockTest is Test {
+    using Math for uint256;
+
     DeploySTZLock deployer;
     STZToken stz;
     STRTokenReceipt str;
@@ -28,8 +31,7 @@ contract STZLockTest is Test {
     event Unlocked(address account, uint256 unlockedAt, uint256 amount);
     event Redeemed(address account, uint256 redeemedAt, uint256 amount);
     event Claimed(address account, uint256 claimedAt, uint256 amount, address token);
-    event STZAddedAsRewards(uint256 amount);
-    event WETHAddedAsRewards(uint256 amount);
+    event AddedRewards(uint256 amount, ISTZLock.RewardType rewardType);
     event EmergencyWithdrawal(uint256 amountInSTZ, uint256 amountInWETH);
 
     function setUp() public virtual {
@@ -274,8 +276,8 @@ contract STZLockTest is Test {
         IERC20(address(stz)).approve(address(stzLock), amountInSTZ);
         weth.approve(address(stzLock), amountInWETH);
 
-        stzLock.addSTZAsRewards(amountInSTZ);
-        stzLock.addWETHAsRewards(amountInWETH);
+        stzLock.addRewards(amountInSTZ, ISTZLock.RewardType.STZ);
+        stzLock.addRewards(amountInWETH, ISTZLock.RewardType.WETH);
         vm.stopPrank();
         _;
     }
@@ -313,8 +315,8 @@ contract STZLockTest is Test {
         vm.startPrank(owner);
         IERC20(address(stz)).approve(address(stzLock), amount);
         vm.expectEmit(true, true, true, true);
-        emit STZAddedAsRewards(amount);
-        stzLock.addSTZAsRewards(amount);
+        emit AddedRewards(amount, ISTZLock.RewardType.STZ);
+        stzLock.addRewards(amount, ISTZLock.RewardType.STZ);
         vm.stopPrank();
 
         uint256 totalRewardsInSTZEnd = stzLock.totalRewardsInSTZ();
@@ -329,8 +331,8 @@ contract STZLockTest is Test {
         vm.startPrank(owner);
         weth.approve(address(stzLock), amount);
         vm.expectEmit(true, true, true, true);
-        emit WETHAddedAsRewards(amount);
-        stzLock.addWETHAsRewards(amount);
+        emit AddedRewards(amount, ISTZLock.RewardType.WETH);
+        stzLock.addRewards(amount, ISTZLock.RewardType.WETH);
         vm.stopPrank();
 
         uint256 totalRewardsInWETHEnd = stzLock.totalRewardsInWETH();
@@ -342,8 +344,8 @@ contract STZLockTest is Test {
 
     function testBobCalculateHisRewards() external addedRewards(10 ether, 0.1 ether) lockedSTZ(10 ether) {
         vm.warp(block.timestamp + 4 days);
-        uint256 stzRewardsAfter4Days = stzLock.calculateSTZRewards(bob);
-        uint256 wethRewardsAfter4Days = stzLock.calculateWETHRewards(bob);
+        uint256 stzRewardsAfter4Days = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 wethRewardsAfter4Days = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
         assertTrue(stzRewardsAfter4Days > 30 ether && stzRewardsAfter4Days <= 40 ether);
         assertTrue(wethRewardsAfter4Days > 0.3 ether && wethRewardsAfter4Days <= 0.4 ether);
@@ -375,14 +377,14 @@ contract STZLockTest is Test {
         uint256 stzPerSecond = stzLock.STZ_REWARDS_PER_SECOND() * 4 days / 3;
         uint256 wethPerSecond = stzLock.WETH_REWARDS_PER_SECOND() * 4 days / 3;
 
-        uint256 bobStzRewards = stzLock.calculateSTZRewards(bob);
-        uint256 bobWethRewards = stzLock.calculateWETHRewards(bob);
+        uint256 bobStzRewards = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 bobWethRewards = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
-        uint256 maryStzRewards = stzLock.calculateSTZRewards(mary);
-        uint256 maryWethRewards = stzLock.calculateWETHRewards(mary);
+        uint256 maryStzRewards = stzLock.calculateRewards(mary, ISTZLock.RewardType.STZ);
+        uint256 maryWethRewards = stzLock.calculateRewards(mary, ISTZLock.RewardType.WETH);
 
-        uint256 carlosStzRewards = stzLock.calculateSTZRewards(carlos);
-        uint256 carlosWethRewards = stzLock.calculateWETHRewards(carlos);
+        uint256 carlosStzRewards = stzLock.calculateRewards(carlos, ISTZLock.RewardType.STZ);
+        uint256 carlosWethRewards = stzLock.calculateRewards(carlos, ISTZLock.RewardType.WETH);
 
         assertTrue(bobStzRewards > stzPerSecond / 2 && bobStzRewards <= stzPerSecond);
         assertTrue(maryStzRewards > stzPerSecond / 2 && maryStzRewards <= stzPerSecond);
@@ -404,10 +406,10 @@ contract STZLockTest is Test {
 
         vm.startPrank(bob);
         vm.expectRevert(ISTZLock.STZLock__Rewards_Unnavailable.selector);
-        stzLock.claimSTZRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.STZ);
 
         vm.expectRevert(ISTZLock.STZLock__Rewards_Unnavailable.selector);
-        stzLock.claimWETHRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.WETH);
         vm.stopPrank();
     }
 
@@ -423,18 +425,25 @@ contract STZLockTest is Test {
         uint256 wethPerSecond = stzLock.WETH_REWARDS_PER_SECOND() * 4 days;
 
         vm.startPrank(bob);
+        (, uint256 stzClaimedBefore,,,,) = stzLock.usersRewards(bob);
         vm.expectEmit(true, true, true, true);
         emit Claimed(bob, block.timestamp, stzPerSecond, address(stz));
-        stzLock.claimSTZRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.STZ);
+        (uint256 stzLastUpdate, uint256 stzClaimed, uint256 stzEarned,,,) = stzLock.usersRewards(bob);
+        assertEq(stzLastUpdate, block.timestamp);
+        assertEq(stzEarned, 0);
+        assertEq(stzPerSecond, stzClaimed);
+        assertTrue(stzClaimed > stzClaimedBefore);
+
         emit Claimed(bob, block.timestamp, wethPerSecond, address(weth));
-        stzLock.claimWETHRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.WETH);
         vm.stopPrank();
 
         uint256 stzBalanceEnd = IERC20(address(stz)).balanceOf(bob);
         uint256 wethBalanceEnd = weth.balanceOf(bob);
 
-        assertEq(stzLock.calculateSTZRewards(bob), 0);
-        assertEq(stzLock.calculateWETHRewards(bob), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH), 0);
         assertEq(stzBalanceEnd, stzPerSecond);
         assertEq(wethBalanceEnd, wethPerSecond);
     }
@@ -449,27 +458,27 @@ contract STZLockTest is Test {
         (uint256 timestamp,) = stzLock.unlockRequests(bob);
         vm.warp(block.timestamp + timestamp + 1 hours);
 
-        uint256 bobStzRewardsStart = stzLock.calculateSTZRewards(bob);
-        uint256 bobWethRewardsStart = stzLock.calculateWETHRewards(bob);
+        uint256 bobStzRewardsStart = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 bobWethRewardsStart = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
         vm.startPrank(bob);
         IERC20(address(str)).approve(address(stzLock), 10 ether);
         stzLock.redeem(10 ether);
         vm.stopPrank();
 
-        uint256 bobStzRewardsEnd = stzLock.calculateSTZRewards(bob);
-        uint256 bobWethRewardsEnd = stzLock.calculateWETHRewards(bob);
+        uint256 bobStzRewardsEnd = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 bobWethRewardsEnd = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
         assertEq(bobStzRewardsStart, bobStzRewardsEnd);
         assertEq(bobWethRewardsStart, bobWethRewardsEnd);
 
         vm.startPrank(bob);
-        stzLock.claimSTZRewards(bob);
-        stzLock.claimWETHRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.STZ);
+        stzLock.claimRewards(ISTZLock.RewardType.WETH);
         vm.stopPrank();
 
-        assertEq(stzLock.calculateSTZRewards(bob), 0);
-        assertEq(stzLock.calculateWETHRewards(bob), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH), 0);
     }
 
     function testBobClaimRewardsAfterLockPeriod() external addedRewards(1_000 ether, 100 ether) {
@@ -490,25 +499,113 @@ contract STZLockTest is Test {
         stzLock.unlock(10 ether); // REQUEST UNLOCK
         vm.stopPrank();
 
-        uint256 bobStzRewardsStart = stzLock.calculateSTZRewards(bob);
-        uint256 bobWethRewardsStart = stzLock.calculateWETHRewards(bob);
+        uint256 bobStzRewardsStart = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 bobWethRewardsStart = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
         // WARP SOME DAYS AFTER ENDING LOCK PERIOD
         vm.warp(block.timestamp + 10 days);
         assertTrue(block.timestamp > stzLock.END_STAKING_UNIX_TIME());
 
-        uint256 bobStzRewardsEnd = stzLock.calculateSTZRewards(bob);
-        uint256 bobWethRewardsEnd = stzLock.calculateWETHRewards(bob);
+        uint256 bobStzRewardsEnd = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+        uint256 bobWethRewardsEnd = stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH);
 
         assertTrue(bobStzRewardsEnd >= bobStzRewardsStart);
         assertTrue(bobWethRewardsEnd >= bobWethRewardsStart);
 
         vm.startPrank(bob);
-        stzLock.claimSTZRewards(bob);
-        stzLock.claimWETHRewards(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.STZ);
+        stzLock.claimRewards(ISTZLock.RewardType.WETH);
         vm.stopPrank();
 
-        assertEq(stzLock.calculateSTZRewards(bob), 0);
-        assertEq(stzLock.calculateWETHRewards(bob), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ), 0);
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH), 0);
+    }
+
+    function testFuzzRedeem(uint256 amount) external {
+        vm.assume(amount > 0 && amount < IERC20(address(stz)).balanceOf(owner));
+        assertTrue(amount < IERC20(address(stz)).balanceOf(owner));
+
+        // OWNER SENDS MONEY TO BOB
+        vm.startPrank(owner);
+        IERC20(address(stz)).approve(owner, amount);
+        IERC20(address(stz)).transferFrom(owner, bob, amount);
+        vm.stopPrank();
+
+        // BOB LOCKS
+        vm.startPrank(bob);
+        IERC20(address(stz)).approve(address(stzLock), amount);
+        stzLock.lock(amount);
+        vm.stopPrank();
+
+        assertEq(stzLock.balances(bob), amount);
+
+        // LINEAR UNLOCK PERIOD
+        vm.warp(block.timestamp + 7 days);
+
+        // BOB REQUEST UNLOCK
+        vm.startPrank(bob);
+        stzLock.unlock(amount);
+        vm.stopPrank();
+
+        // WARP 7 DAYS OF UNLOCK REQUEST PERIOD
+        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        vm.warp(block.timestamp + timestamp + 1 hours);
+
+        // BOB REDEEMS
+        vm.startPrank(bob);
+        IERC20(address(str)).approve(address(stzLock), amount);
+        stzLock.redeem(amount);
+        vm.stopPrank();
+
+        assertEq(IERC20(address(stz)).balanceOf(bob), amount);
+        assertEq(stzLock.balances(bob), 0);
+    }
+
+    function testFuzzRewards(uint256 amount) external addedRewards(1000 ether, 100 ether) {
+        vm.assume(amount > 0 && amount < IERC20(address(stz)).balanceOf(owner));
+        assertTrue(amount < IERC20(address(stz)).balanceOf(owner));
+
+        // OWNER SENDS MONEY TO BOB
+        vm.startPrank(owner);
+        IERC20(address(stz)).approve(owner, amount);
+        IERC20(address(stz)).transferFrom(owner, bob, amount);
+        vm.stopPrank();
+
+        // BOB LOCKS
+        vm.startPrank(bob);
+        IERC20(address(stz)).approve(address(stzLock), amount);
+        stzLock.lock(amount);
+        vm.stopPrank();
+
+        assertEq(stzLock.balances(bob), amount);
+
+        uint256 rewards1 = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+
+        vm.warp(block.timestamp + 7 days);
+        uint256 rewards2 = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+
+        vm.warp(block.timestamp + 7 days);
+        uint256 rewards3 = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+
+        vm.warp(block.timestamp + 7 days);
+        uint256 rewards4 = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
+
+        assertTrue(rewards2 > rewards1);
+        assertTrue(rewards3 > rewards2);
+        assertTrue(rewards4 > rewards3);
+        assertEq(IERC20(address(stz)).balanceOf(bob), 0);
+
+        // BOB CLAIM REWARDS
+        vm.startPrank(bob);
+        stzLock.claimRewards(ISTZLock.RewardType.STZ);
+        vm.stopPrank();
+
+        (uint256 stzLastUpdate, uint256 stzClaimed, uint256 stzEarned,,,) = stzLock.usersRewards(bob);
+        assertEq(stzLastUpdate, block.timestamp);
+        assertEq(stzClaimed, rewards4);
+        assertEq(stzEarned, 0);
+
+        assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ), 0);
+        assertEq(IERC20(address(stz)).balanceOf(bob), rewards4);
     }
 }
