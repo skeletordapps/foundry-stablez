@@ -589,4 +589,80 @@ contract STZLockTest is Test {
         assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ), 0);
         assertEq(IERC20(address(stz)).balanceOf(bob), rewards4);
     }
+
+    function testFuzzLockedPoints(uint256 amount) external addedRewards(1000 ether, 100 ether) {
+        vm.assume(amount > 0 && amount < IERC20(address(stz)).balanceOf(owner));
+        assertTrue(amount < IERC20(address(stz)).balanceOf(owner));
+
+        // OWNER SENDS MONEY TO BOB
+        vm.startPrank(owner);
+        IERC20(address(stz)).approve(owner, amount);
+        IERC20(address(stz)).transferFrom(owner, bob, amount);
+        vm.stopPrank();
+
+        // BOB LOCKS
+        vm.startPrank(bob);
+        IERC20(address(stz)).approve(address(stzLock), amount);
+        stzLock.lock(amount);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 lockedPointsStart = stzLock.calculateLockedPoints(bob);
+        assertTrue(lockedPointsStart > 0);
+
+        vm.startPrank(bob);
+        stzLock.unlock(amount);
+        vm.stopPrank();
+
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
+
+        vm.warp(timestamp + 1 days);
+        uint256 lockedPointsMid = stzLock.calculateLockedPoints(bob);
+        assertTrue(lockedPointsMid > lockedPointsStart);
+
+        vm.startPrank(bob);
+        IERC20(address(str)).approve(address(stzLock), amount);
+        stzLock.redeem(amount);
+
+        assertEq(stzLock.calculateLockedPoints(bob), 0);
+    }
+
+    function testFuzzLockedPointsAfterLockingPeriodEnds(uint256 amount) external addedRewards(1000 ether, 100 ether) {
+        vm.assume(amount > 0 && amount < IERC20(address(stz)).balanceOf(owner));
+        assertTrue(amount < IERC20(address(stz)).balanceOf(owner));
+
+        // OWNER SENDS MONEY TO BOB
+        vm.startPrank(owner);
+        IERC20(address(stz)).approve(owner, amount);
+        IERC20(address(stz)).transferFrom(owner, bob, amount);
+        vm.stopPrank();
+
+        // BOB LOCKS
+        vm.startPrank(bob);
+        IERC20(address(stz)).approve(address(stzLock), amount);
+        stzLock.lock(amount);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 days);
+        uint256 lockedPointsStart = stzLock.calculateLockedPoints(bob);
+        assertTrue(lockedPointsStart > 0);
+
+        vm.warp(block.timestamp + stzLock.END_STAKING_UNIX_TIME() + 1 days);
+
+        vm.startPrank(bob);
+        stzLock.unlock(amount);
+        vm.stopPrank();
+
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
+
+        vm.warp(timestamp + 1 days);
+        uint256 lockedPointsMid = stzLock.calculateLockedPoints(bob);
+        assertTrue(lockedPointsMid > lockedPointsStart);
+
+        vm.startPrank(bob);
+        IERC20(address(str)).approve(address(stzLock), amount);
+        stzLock.redeem(amount);
+
+        assertEq(stzLock.calculateLockedPoints(bob), 0);
+    }
 }
