@@ -35,6 +35,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     mapping(address account => uint256 amount) public balances;
     mapping(address account => ISTZLock.UnlockRequest unlockRequest) public unlockRequests;
     mapping(address account => ISTZLock.Rewards userRewards) public usersRewards;
+    mapping(address account => ISTZLock.LockedPoints lps) public usersLockedPoints;
 
     event Locked(address account, uint256 lockedAt, uint256 amount);
     event Unlocked(address account, uint256 unlockedAt, uint256 amount);
@@ -51,6 +52,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
 
         STZ_REWARDS_PER_SECOND = uint256(10 ether) / 86400;
         WETH_REWARDS_PER_SECOND = uint256(0.1 ether) / 86400;
+        LPS_REWARDS_PER_SECOND = uint256(1 ether) / 365 / 86400;
     }
 
     modifier canLock(uint256 amount) {
@@ -92,6 +94,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         STZ.safeTransferFrom(msg.sender, address(this), amount);
 
         updateRewards(msg.sender);
+        updateLockedPoints(msg.sender, false);
         balances[msg.sender] += amount;
         totalLocked += amount;
 
@@ -111,6 +114,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         IERC20(address(STR)).safeTransferFrom(msg.sender, address(this), amount);
 
         updateRewards(msg.sender);
+        updateLockedPoints(msg.sender, true);
 
         balances[msg.sender] -= amount;
         totalLocked -= amount;
@@ -218,6 +222,26 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         return accumulatedRewards + newRewards;
     }
 
+    function calculateLockedPoints(address account) public view returns (uint256) {
+        ISTZLock.LockedPoints memory lps = usersLockedPoints[account];
+
+        uint256 elapsedTime;
+        uint256 lockedAmount = balances[account];
+
+        if (lockedAmount == 0) return 0;
+
+        if (block.timestamp > lps.lastUpdate) {
+            elapsedTime = (block.timestamp > END_STAKING_UNIX_TIME)
+                ? END_STAKING_UNIX_TIME - lps.lastUpdate
+                : block.timestamp - lps.lastUpdate;
+        }
+
+        uint256 pointsPerToken = (elapsedTime * LPS_REWARDS_PER_SECOND * 1e24) / lockedAmount;
+        uint256 newPoints = (lockedAmount * pointsPerToken) / 1e24;
+
+        return newPoints;
+    }
+
     function updateRewards(address account) internal {
         ISTZLock.Rewards memory userRewards = usersRewards[account];
         userRewards.stzEarned = calculateRewards(account, ISTZLock.RewardType.STZ);
@@ -225,5 +249,12 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         userRewards.wethEarned = calculateRewards(account, ISTZLock.RewardType.WETH);
         userRewards.wethLastUpdate = block.timestamp;
         usersRewards[account] = userRewards;
+    }
+
+    function updateLockedPoints(address account, bool clean) internal {
+        ISTZLock.LockedPoints memory lps = usersLockedPoints[account];
+        lps.accumulated = clean ? 0 : calculateLockedPoints(account);
+        lps.lastUpdate = block.timestamp;
+        usersLockedPoints[account] = lps;
     }
 }

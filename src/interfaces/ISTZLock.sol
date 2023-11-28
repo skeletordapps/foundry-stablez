@@ -7,6 +7,11 @@ interface ISTZLock {
         WETH
     }
 
+    struct LockedPoints {
+        uint256 lastUpdate;
+        uint256 accumulated;
+    }
+
     struct UnlockRequest {
         uint256 timestamp;
         uint256 amount;
