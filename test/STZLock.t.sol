@@ -126,13 +126,6 @@ contract STZLockTest is Test {
         _;
     }
 
-    function testRevertUnlockWhenInLinearUnlockPeriod() external lockedSTZ(10 ether) {
-        vm.startPrank(bob);
-        vm.expectRevert(ISTZLock.STZLock__LockedInLinearPeriod.selector);
-        stzLock.unlock(10 ether);
-        vm.stopPrank();
-    }
-
     function testUnlock() external lockedSTZ(10 ether) {
         vm.warp(block.timestamp + 7 days);
         vm.startPrank(bob);
@@ -141,14 +134,9 @@ contract STZLockTest is Test {
         stzLock.unlock(10 ether);
         vm.stopPrank();
 
-        (uint256 timestamp, uint256 amount) = stzLock.unlockRequests(bob);
+        (uint256 timestamp, uint256 amount,) = stzLock.unlockRequests(bob);
         assertEq(timestamp, block.timestamp + 7 days);
         assertEq(amount, 10 ether);
-    }
-
-    modifier linearUnlockPeriodPassed() {
-        vm.warp(block.timestamp + 7 days);
-        _;
     }
 
     modifier unlock() {
@@ -158,7 +146,7 @@ contract STZLockTest is Test {
         _;
     }
 
-    function testRevertRequestUnlockWhenIsOngoing() external lockedSTZ(10 ether) linearUnlockPeriodPassed unlock {
+    function testRevertRequestUnlockWhenIsOngoing() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
         vm.expectRevert(ISTZLock.STZLock__RequestForUnlockIsOngoing.selector);
         stzLock.unlock(10 ether);
@@ -174,31 +162,26 @@ contract STZLockTest is Test {
         vm.stopPrank();
     }
 
-    function testReverRedeemWithAntecipatedRedeem() external lockedSTZ(10 ether) linearUnlockPeriodPassed unlock {
+    function testReverRedeemWithAntecipatedRedeem() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
         vm.expectRevert(ISTZLock.STZLock__OutOfUnlockWindow.selector);
         stzLock.redeem(10 ether);
         vm.stopPrank();
     }
 
-    function testRevertRedeemWithOutdatedRequest() external lockedSTZ(10 ether) linearUnlockPeriodPassed unlock {
+    function testRevertRedeemWithOutdatedRequest() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         uint256 unlockWindow = timestamp + stzLock.UNLOCK_WINDOW_PERIOD();
-        vm.warp(block.timestamp + unlockWindow + 2 hours);
+        vm.warp(unlockWindow + 2 hours);
         vm.expectRevert(ISTZLock.STZLock__OutOfUnlockWindow.selector);
         stzLock.redeem(10 ether);
         vm.stopPrank();
     }
 
-    function testRevertRedeemkWhenAmountIsBiggerThanLockedBalance()
-        external
-        lockedSTZ(10 ether)
-        linearUnlockPeriodPassed
-        unlock
-    {
+    function testRevertRedeemkWhenAmountIsBiggerThanLockedBalance() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(block.timestamp + timestamp + 1 hours);
 
         vm.expectRevert(ISTZLock.STZLock__UnsufficientLockedBalance.selector);
@@ -206,19 +189,21 @@ contract STZLockTest is Test {
         vm.stopPrank();
     }
 
-    function testRevertRedeemWhenAmountIsbiggerThanRequested() external lockedSTZ(10 ether) linearUnlockPeriodPassed {
+    function testRevertRedeemWhenAmountIsbiggerThanRequested() external lockedSTZ(10 ether) {
         vm.startPrank(bob);
         stzLock.unlock(9 ether);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
-        vm.warp(block.timestamp + timestamp + 1 hours);
+        (uint256 timestamp,, bool valid) = stzLock.unlockRequests(bob);
+        assertEq(valid, true);
+
+        vm.warp(timestamp + 1 hours);
 
         vm.expectRevert(ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock.selector);
         stzLock.redeem(10 ether);
         vm.stopPrank();
     }
 
-    function testRedeem() external lockedSTZ(10 ether) linearUnlockPeriodPassed unlock {
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+    function testRedeem() external lockedSTZ(10 ether) unlock {
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(block.timestamp + timestamp + 1 hours);
 
         vm.startPrank(bob);
@@ -235,7 +220,7 @@ contract STZLockTest is Test {
 
     // TEST PAUSE & UNPAUSE
 
-    function testRevertWhenPaused() external lockedSTZ(10 ether) linearUnlockPeriodPassed {
+    function testRevertWhenPaused() external lockedSTZ(10 ether) {
         vm.startPrank(owner);
         stzLock.pause();
         assertEq(stzLock.paused(), true);
@@ -254,7 +239,7 @@ contract STZLockTest is Test {
         _;
     }
 
-    function testOwnerCanUnpause() external lockedSTZ(10 ether) linearUnlockPeriodPassed paused {
+    function testOwnerCanUnpause() external lockedSTZ(10 ether) paused {
         vm.startPrank(owner);
         stzLock.unpause();
         vm.stopPrank();
@@ -452,10 +437,9 @@ contract STZLockTest is Test {
         external
         addedRewards(1_000 ether, 100 ether)
         lockedSTZ(10 ether)
-        linearUnlockPeriodPassed
         unlock
     {
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(block.timestamp + timestamp + 1 hours);
 
         uint256 bobStzRewardsStart = stzLock.calculateRewards(bob, ISTZLock.RewardType.STZ);
@@ -539,17 +523,14 @@ contract STZLockTest is Test {
 
         assertEq(stzLock.balances(bob), amount);
 
-        // LINEAR UNLOCK PERIOD
-        vm.warp(block.timestamp + 7 days);
-
         // BOB REQUEST UNLOCK
         vm.startPrank(bob);
         stzLock.unlock(amount);
         vm.stopPrank();
 
         // WARP 7 DAYS OF UNLOCK REQUEST PERIOD
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
-        vm.warp(block.timestamp + timestamp + 1 hours);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
+        vm.warp(timestamp + 1 hours);
 
         // BOB REDEEMS
         vm.startPrank(bob);

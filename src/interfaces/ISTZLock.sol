@@ -7,14 +7,10 @@ interface ISTZLock {
         WETH
     }
 
-    struct UserPoints {
-        uint256 lastUpdate;
-        uint256 accumulated;
-    }
-
     struct UnlockRequest {
         uint256 timestamp;
         uint256 amount;
+        bool valid;
     }
 
     struct Rewards {

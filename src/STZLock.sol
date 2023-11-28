@@ -15,13 +15,13 @@ import {console2} from "forge-std/console2.sol";
 contract STZLock is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant LINEAR_LOCK_PERIOD = 7 days;
     uint256 public constant UNLOCK_REQUEST_PERIOD = 7 days;
     uint256 public constant UNLOCK_WINDOW_PERIOD = 3 days;
     uint256 public constant END_STAKING_UNIX_TIME = 365 days;
 
     uint256 public immutable STZ_REWARDS_PER_SECOND;
     uint256 public immutable WETH_REWARDS_PER_SECOND;
+    uint256 public immutable LPS_REWARDS_PER_SECOND;
 
     uint256 public totalRewardsInSTZ;
     uint256 public totalRewardsInWETH;
@@ -33,7 +33,6 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     ISTRTokenReceipt public immutable STR;
 
     mapping(address account => uint256 amount) public balances;
-    mapping(address account => uint256 linearLockPeriod) public linearLockPeriods;
     mapping(address account => ISTZLock.UnlockRequest unlockRequest) public unlockRequests;
     mapping(address account => ISTZLock.Rewards userRewards) public usersRewards;
 
@@ -55,52 +54,42 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     modifier canLock(uint256 amount) {
-        // Amount is lower than permited
+        // Amount is zero
         if (amount == 0) revert ISTZLock.STZLock__InsufficientAmountToLock();
 
-        uint256 stzBalance = STZ.balanceOf(msg.sender);
         // User tried to lock more than have
-        if (stzBalance < amount) revert ISTZLock.STZLock__UnsufficientBalance();
+        if (STZ.balanceOf(msg.sender) < amount) revert ISTZLock.STZLock__UnsufficientBalance();
         _;
     }
 
     modifier canUnlock(uint256 amount) {
         // User has no amount locked
-        if (linearLockPeriods[msg.sender] == 0) revert ISTZLock.STZLock__UnsufficientLockedBalance();
-        // User needs to wait linear lock period to unlock
-        if (block.timestamp < linearLockPeriods[msg.sender]) revert ISTZLock.STZLock__LockedInLinearPeriod();
+        if (amount > balances[msg.sender]) revert ISTZLock.STZLock__UnsufficientLockedBalance();
+
         // User already requested for unlock
-        if (
-            unlockRequests[msg.sender].timestamp > 0
-                && block.timestamp <= unlockRequests[msg.sender].timestamp + UNLOCK_REQUEST_PERIOD + UNLOCK_WINDOW_PERIOD
-        ) {
-            revert ISTZLock.STZLock__RequestForUnlockIsOngoing();
-        }
+        if (unlockRequests[msg.sender].valid) revert ISTZLock.STZLock__RequestForUnlockIsOngoing();
         _;
     }
 
     modifier canRedeem(uint256 amount) {
         // User didn't requested to unlock yet
-        if (unlockRequests[msg.sender].timestamp == 0) revert ISTZLock.STZLock__RequestForUnlockNotFound();
+        if (!unlockRequests[msg.sender].valid) revert ISTZLock.STZLock__RequestForUnlockNotFound();
         // Unlock window didn't start yet
-        if (block.timestamp < unlockRequests[msg.sender].timestamp + UNLOCK_REQUEST_PERIOD) {
-            revert ISTZLock.STZLock__OutOfUnlockWindow();
-        }
+        if (block.timestamp < unlockRequests[msg.sender].timestamp) revert ISTZLock.STZLock__OutOfUnlockWindow();
         // Unlock window is over
-        if (block.timestamp > unlockRequests[msg.sender].timestamp + UNLOCK_REQUEST_PERIOD + UNLOCK_WINDOW_PERIOD) {
+        if (block.timestamp > unlockRequests[msg.sender].timestamp + UNLOCK_WINDOW_PERIOD) {
+            unlockRequests[msg.sender].valid = false; // Update unlock request to invalid.
             revert ISTZLock.STZLock__OutOfUnlockWindow();
         }
         // User has less balance then requested
-        if (balances[msg.sender] < amount) revert ISTZLock.STZLock__UnsufficientLockedBalance();
+        if (amount > balances[msg.sender]) revert ISTZLock.STZLock__UnsufficientLockedBalance();
         // User is trying to unlock more than requested
-        if (unlockRequests[msg.sender].amount < amount) revert ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock();
+        if (amount > unlockRequests[msg.sender].amount) revert ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock();
         _;
     }
 
     function lock(uint256 amount) external whenNotPaused canLock(amount) nonReentrant {
         STZ.safeTransferFrom(msg.sender, address(this), amount);
-
-        if (linearLockPeriods[msg.sender] == 0) linearLockPeriods[msg.sender] = block.timestamp + LINEAR_LOCK_PERIOD;
 
         updateRewards(msg.sender);
         balances[msg.sender] += amount;
@@ -114,8 +103,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     function unlock(uint256 amount) external whenNotPaused canUnlock(amount) nonReentrant {
-        ISTZLock.UnlockRequest memory unlockRequest = ISTZLock.UnlockRequest(block.timestamp + 7 days, amount);
-        unlockRequests[msg.sender] = unlockRequest;
+        unlockRequests[msg.sender] = ISTZLock.UnlockRequest(block.timestamp + 7 days, amount, true);
         emit Unlocked(msg.sender, block.timestamp, amount);
     }
 
@@ -123,6 +111,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         IERC20(address(STR)).safeTransferFrom(msg.sender, address(this), amount);
 
         updateRewards(msg.sender);
+
         balances[msg.sender] -= amount;
         totalLocked -= amount;
 
@@ -170,8 +159,6 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
             if (rewards == 0 || _totalRewards < rewards) revert ISTZLock.STZLock__Rewards_Unnavailable();
 
             ISTZLock.Rewards memory userRewards = usersRewards[msg.sender];
-
-            console2.log("rewards", rewards);
 
             if (rewardType == ISTZLock.RewardType.STZ) {
                 userRewards.stzEarned = 0;
@@ -232,11 +219,11 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     function updateRewards(address account) internal {
-        ISTZLock.Rewards storage userRewards = usersRewards[account];
+        ISTZLock.Rewards memory userRewards = usersRewards[account];
         userRewards.stzEarned = calculateRewards(account, ISTZLock.RewardType.STZ);
         userRewards.stzLastUpdate = block.timestamp;
-
         userRewards.wethEarned = calculateRewards(account, ISTZLock.RewardType.WETH);
         userRewards.wethLastUpdate = block.timestamp;
+        usersRewards[account] = userRewards;
     }
 }
