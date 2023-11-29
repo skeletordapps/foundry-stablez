@@ -505,6 +505,72 @@ contract STZLockTest is Test {
         assertEq(stzLock.calculateRewards(bob, ISTZLock.RewardType.WETH), 0);
     }
 
+    // UPDATE PERIODS
+
+    function testDoNotUpdateWhenTryToSetPeriodAsZero() external {
+        uint256 unlockRequestPeriod = stzLock.UNLOCK_REQUEST_PERIOD();
+        uint256 unlockWindowPeriod = stzLock.UNLOCK_WINDOW_PERIOD();
+        uint256 endLockTime = stzLock.END_STAKING_UNIX_TIME();
+
+        vm.startPrank(owner);
+        stzLock.updatePeriods(0, 0, 0);
+        vm.stopPrank();
+
+        assertEq(unlockRequestPeriod, stzLock.UNLOCK_REQUEST_PERIOD());
+        assertEq(unlockWindowPeriod, stzLock.UNLOCK_WINDOW_PERIOD());
+        assertEq(endLockTime, stzLock.END_STAKING_UNIX_TIME());
+    }
+
+    function testDoNotUpdateWhenTryToSetEndLockTimeLessThanCurrentTimestamp() external {
+        uint256 endLockTime = stzLock.END_STAKING_UNIX_TIME();
+
+        vm.startPrank(owner);
+        stzLock.updatePeriods(0, 0, endLockTime);
+        vm.stopPrank();
+
+        assertEq(endLockTime, stzLock.END_STAKING_UNIX_TIME());
+    }
+
+    function testUpdatePeriods() external {
+        vm.startPrank(owner);
+        stzLock.updatePeriods(10 days, 1 days, block.timestamp + 10 days);
+        vm.stopPrank();
+
+        assertEq(stzLock.UNLOCK_REQUEST_PERIOD(), 10 days);
+        assertEq(stzLock.UNLOCK_WINDOW_PERIOD(), 1 days);
+        assertEq(stzLock.END_STAKING_UNIX_TIME(), block.timestamp + 10 days);
+    }
+
+    // UPDATE REWARD RATE TESTS
+
+    function testDoNotUpdateWhenTryToSetRateToZero() external {
+        vm.startPrank(owner);
+        uint256 stzRateStart = stzLock.STZ_REWARDS_PER_SECOND();
+        stzLock.updateRewardsRate(0, ISTZLock.RewardType.STZ);
+        uint256 stzRateEnd = stzLock.STZ_REWARDS_PER_SECOND();
+        assertEq(stzRateStart, stzRateEnd);
+
+        uint256 wethRateStart = stzLock.WETH_REWARDS_PER_SECOND();
+        stzLock.updateRewardsRate(0, ISTZLock.RewardType.WETH);
+        uint256 wethRateEnd = stzLock.WETH_REWARDS_PER_SECOND();
+        assertEq(wethRateStart, wethRateEnd);
+        vm.stopPrank();
+    }
+
+    function testUpdateRates() external {
+        vm.startPrank(owner);
+
+        stzLock.updateRewardsRate(5 ether, ISTZLock.RewardType.STZ);
+        assertEq(stzLock.STZ_REWARDS_PER_SECOND(), uint256(5 ether) / 86400);
+
+        stzLock.updateRewardsRate(0.5 ether, ISTZLock.RewardType.WETH);
+        assertEq(stzLock.WETH_REWARDS_PER_SECOND(), uint256(0.5 ether) / 86400);
+
+        vm.stopPrank();
+    }
+
+    // FUZZ TESTS
+
     function testFuzzRedeem(uint256 amount) external {
         vm.assume(amount > 0 && amount < IERC20(address(stz)).balanceOf(owner));
         assertTrue(amount < IERC20(address(stz)).balanceOf(owner));

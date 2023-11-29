@@ -15,13 +15,13 @@ import {console2} from "forge-std/console2.sol";
 contract STZLock is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant UNLOCK_REQUEST_PERIOD = 7 days;
-    uint256 public constant UNLOCK_WINDOW_PERIOD = 3 days;
-    uint256 public constant END_STAKING_UNIX_TIME = 365 days;
+    uint256 public UNLOCK_REQUEST_PERIOD = 7 days;
+    uint256 public UNLOCK_WINDOW_PERIOD = 3 days;
+    uint256 public END_STAKING_UNIX_TIME = 365 days;
 
-    uint256 public immutable STZ_REWARDS_PER_SECOND;
-    uint256 public immutable WETH_REWARDS_PER_SECOND;
-    uint256 public immutable LPS_REWARDS_PER_SECOND;
+    uint256 public STZ_REWARDS_PER_SECOND;
+    uint256 public WETH_REWARDS_PER_SECOND;
+    uint256 public LPS_REWARDS_PER_SECOND;
 
     uint256 public totalRewardsInSTZ;
     uint256 public totalRewardsInWETH;
@@ -136,6 +136,32 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function updatePeriods(uint256 unlockRequestPeriod, uint256 unlockWindowPeriod, uint256 endLockTime)
+        external
+        onlyOwner
+        whenNotPaused
+    {
+        if (unlockRequestPeriod > 0) {
+            UNLOCK_REQUEST_PERIOD = unlockRequestPeriod;
+        }
+
+        if (unlockWindowPeriod > 0) {
+            UNLOCK_WINDOW_PERIOD = unlockWindowPeriod;
+        }
+
+        if (endLockTime > block.timestamp) {
+            END_STAKING_UNIX_TIME = endLockTime;
+        }
+    }
+
+    function updateRewardsRate(uint256 ratePerDay, ISTZLock.RewardType rewardType) external onlyOwner whenNotPaused {
+        if (ratePerDay > 0 && rewardType == ISTZLock.RewardType.STZ) {
+            STZ_REWARDS_PER_SECOND = ratePerDay / 86400;
+        } else if (ratePerDay > 0 && rewardType == ISTZLock.RewardType.WETH) {
+            WETH_REWARDS_PER_SECOND = ratePerDay / 86400;
+        }
     }
 
     function addRewards(uint256 amount, ISTZLock.RewardType rewardType) external whenNotPaused nonReentrant {
