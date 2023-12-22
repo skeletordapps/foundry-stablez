@@ -2,11 +2,6 @@
 pragma solidity ^0.8.23;
 
 interface ISTZLock {
-    enum RewardType {
-        STZ,
-        WETH
-    }
-
     struct UnlockRequest {
         uint256 timestamp;
         uint256 amount;

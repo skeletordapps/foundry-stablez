@@ -4,4 +4,6 @@ pragma solidity ^0.8.23;
 interface ISTRTokenReceipt {
     function mint(address recipient, uint256 amount) external;
     function burn(address recipient, uint256 amount) external;
+    function grantMintRole(address account) external;
+    function grantBurnRole(address account) external;
 }
