@@ -5,7 +5,6 @@ interface ISTZLock {
     struct UnlockRequest {
         uint256 timestamp;
         uint256 amount;
-        bool valid;
     }
 
     struct Rewards {

@@ -69,19 +69,24 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
         // User has no amount locked
         if (amount > balances[msg.sender]) revert ISTZLock.STZLock__UnsufficientLockedBalance();
 
-        // User already requested for unlock
-        if (unlockRequests[msg.sender].valid) revert ISTZLock.STZLock__RequestForUnlockIsOngoing();
+        // Unlock is not valid anymore
+        if (block.timestamp > unlockRequests[msg.sender].timestamp) delete unlockRequests[msg.sender];
+
+        // Unlock request is ongoing
+        if (unlockRequests[msg.sender].timestamp > 0) {
+            revert ISTZLock.STZLock__RequestForUnlockIsOngoing();
+        }
         _;
     }
 
     modifier canRedeem(uint256 amount) {
         // User didn't requested to unlock yet
-        if (!unlockRequests[msg.sender].valid) revert ISTZLock.STZLock__RequestForUnlockNotFound();
+        if (unlockRequests[msg.sender].timestamp == 0) revert ISTZLock.STZLock__RequestForUnlockNotFound();
         // Unlock window didn't start yet
         if (block.timestamp < unlockRequests[msg.sender].timestamp) revert ISTZLock.STZLock__OutOfUnlockWindow();
         // Unlock window is over
         if (block.timestamp > unlockRequests[msg.sender].timestamp + UNLOCK_WINDOW_PERIOD) {
-            unlockRequests[msg.sender].valid = false; // Update unlock request to invalid.
+            delete unlockRequests[msg.sender];
             revert ISTZLock.STZLock__OutOfUnlockWindow();
         }
         // User has less balance then requested
@@ -104,7 +109,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     function unlock(uint256 amount) external whenNotPaused canUnlock(amount) nonReentrant {
-        unlockRequests[msg.sender] = ISTZLock.UnlockRequest(block.timestamp + UNLOCK_REQUEST_PERIOD, amount, true);
+        unlockRequests[msg.sender] = ISTZLock.UnlockRequest(block.timestamp + UNLOCK_REQUEST_PERIOD, amount);
         emit Unlocked(msg.sender, block.timestamp, amount);
     }
 
