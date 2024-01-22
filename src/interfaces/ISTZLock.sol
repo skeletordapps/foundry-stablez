@@ -5,6 +5,7 @@ interface ISTZLock {
     struct UnlockRequest {
         uint256 timestamp;
         uint256 amount;
+        uint256 redeemed;
     }
 
     struct Rewards {
@@ -24,5 +25,6 @@ interface ISTZLock {
     error STZLock__OutOfUnlockWindow();
     error STZLock__RequestForUnlockNotFound();
     error STZLock__AmountExceedsMaxRequestedToUnlock();
+    error STZLock__AmountRequestedAlreadyRedeemed();
     error STZLock__Rewards_Unnavailable();
 }

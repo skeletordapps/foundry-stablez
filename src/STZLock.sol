@@ -15,8 +15,8 @@ import {console2} from "forge-std/console2.sol";
 contract STZLock is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public UNLOCK_REQUEST_PERIOD = 7 days;
-    uint256 public UNLOCK_WINDOW_PERIOD = 3 days;
+    uint256 public UNLOCK_REQUEST_PERIOD = 7 days; // 7 days;
+    uint256 public UNLOCK_WINDOW_PERIOD = 3 days; // 3 days;
     uint256 public END_STAKING_UNIX_TIME;
 
     uint256 public STZ_REWARDS_PER_SECOND;
@@ -80,19 +80,24 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     modifier canRedeem(uint256 amount) {
+        ISTZLock.UnlockRequest memory request = unlockRequests[msg.sender];
+
         // User didn't requested to unlock yet
-        if (unlockRequests[msg.sender].timestamp == 0) revert ISTZLock.STZLock__RequestForUnlockNotFound();
+        if (request.timestamp == 0) revert ISTZLock.STZLock__RequestForUnlockNotFound();
         // Unlock window didn't start yet
-        if (block.timestamp < unlockRequests[msg.sender].timestamp) revert ISTZLock.STZLock__OutOfUnlockWindow();
+        if (block.timestamp < request.timestamp) revert ISTZLock.STZLock__OutOfUnlockWindow();
         // Unlock window is over
-        if (block.timestamp > unlockRequests[msg.sender].timestamp + UNLOCK_WINDOW_PERIOD) {
+        if (block.timestamp > request.timestamp + UNLOCK_WINDOW_PERIOD) {
             delete unlockRequests[msg.sender];
             revert ISTZLock.STZLock__OutOfUnlockWindow();
         }
         // User has less balance then requested
         if (amount > balances[msg.sender]) revert ISTZLock.STZLock__UnsufficientLockedBalance();
         // User is trying to unlock more than requested
-        if (amount > unlockRequests[msg.sender].amount) revert ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock();
+        if (amount > request.amount) revert ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock();
+        if (amount + request.redeemed > request.amount) {
+            revert ISTZLock.STZLock__AmountRequestedAlreadyRedeemed();
+        }
         _;
     }
 
@@ -109,7 +114,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
     }
 
     function unlock(uint256 amount) external whenNotPaused canUnlock(amount) nonReentrant {
-        unlockRequests[msg.sender] = ISTZLock.UnlockRequest(block.timestamp + UNLOCK_REQUEST_PERIOD, amount);
+        unlockRequests[msg.sender] = ISTZLock.UnlockRequest(block.timestamp + UNLOCK_REQUEST_PERIOD, amount, 0);
         emit Unlocked(msg.sender, block.timestamp, amount);
     }
 
@@ -120,6 +125,7 @@ contract STZLock is Ownable, Pausable, ReentrancyGuard {
 
         balances[msg.sender] -= amount;
         totalLocked -= amount;
+        unlockRequests[msg.sender].redeemed += amount;
 
         emit Redeemed(msg.sender, block.timestamp, amount);
 

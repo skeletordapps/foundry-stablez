@@ -132,7 +132,7 @@ contract STZLockTest is Test {
         stzLock.unlock(10 ether);
         vm.stopPrank();
 
-        (uint256 timestamp, uint256 amount) = stzLock.unlockRequests(bob);
+        (uint256 timestamp, uint256 amount,) = stzLock.unlockRequests(bob);
         assertEq(timestamp, block.timestamp + 7 days);
         assertEq(amount, 10 ether);
     }
@@ -169,7 +169,7 @@ contract STZLockTest is Test {
 
     function testRevertRedeemWithOutdatedRequest() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         uint256 unlockWindow = timestamp + stzLock.UNLOCK_WINDOW_PERIOD();
         vm.warp(unlockWindow + 2 hours);
         vm.expectRevert(ISTZLock.STZLock__OutOfUnlockWindow.selector);
@@ -179,7 +179,7 @@ contract STZLockTest is Test {
 
     function testRevertRedeemkWhenAmountIsBiggerThanLockedBalance() external lockedSTZ(10 ether) unlock {
         vm.startPrank(bob);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(timestamp + 1 hours);
 
         vm.expectRevert(ISTZLock.STZLock__UnsufficientLockedBalance.selector);
@@ -190,7 +190,7 @@ contract STZLockTest is Test {
     function testRevertRedeemWhenAmountIsbiggerThanRequested() external lockedSTZ(10 ether) {
         vm.startPrank(bob);
         stzLock.unlock(9 ether);
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(timestamp + 1 hours);
 
         vm.expectRevert(ISTZLock.STZLock__AmountExceedsMaxRequestedToUnlock.selector);
@@ -199,7 +199,7 @@ contract STZLockTest is Test {
     }
 
     function testRedeem() external lockedSTZ(10 ether) unlock {
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(timestamp + 1 hours);
 
         vm.startPrank(bob);
@@ -435,7 +435,7 @@ contract STZLockTest is Test {
         lockedSTZ(10 ether)
         unlock
     {
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(timestamp + 1 hours);
 
         uint256 bobStzRewardsStart = stzLock.calculateRewards(bob, 0);
@@ -596,7 +596,7 @@ contract STZLockTest is Test {
         vm.stopPrank();
 
         // WARP 7 DAYS OF UNLOCK REQUEST PERIOD
-        (uint256 timestamp,) = stzLock.unlockRequests(bob);
+        (uint256 timestamp,,) = stzLock.unlockRequests(bob);
         vm.warp(timestamp + 1 hours);
 
         // BOB REDEEMS
